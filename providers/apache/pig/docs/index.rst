@@ -54,7 +54,7 @@
     :maxdepth: 1
     :caption: Resources
 
-    Example DAGs <https://github.com/apache/airflow/tree/providers-apache-pig/|version|/providers/tests/system/apache/pig>
+    Example DAGs <https://github.com/apache/airflow/tree/providers-apache-pig/|version|/providers/apache/pig/tests/system/apache/pig>
     PyPI Repository <https://pypi.org/project/apache-airflow-providers-apache-pig/>
     Installing from sources <installing-providers-from-sources>
 
@@ -75,7 +75,7 @@ apache-airflow-providers-apache-pig package
 `Apache Pig <https://pig.apache.org/>`__
 
 
-Release: 4.6.0
+Release: 4.6.1
 
 Provider package
 ----------------
@@ -93,7 +93,7 @@ For the minimum Airflow version supported, see ``Requirements`` below.
 Requirements
 ------------
 
-The minimum Apache Airflow version supported by this provider package is ``2.9.0``.
+The minimum Apache Airflow version supported by this provider distribution is ``2.9.0``.
 
 ==================  ==================
 PIP package         Version required

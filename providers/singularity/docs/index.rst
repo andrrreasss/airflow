@@ -48,7 +48,7 @@
     :maxdepth: 1
     :caption: Resources
 
-    Example DAGs <https://github.com/apache/airflow/blob/providers-singularity/|version|/providers/tests/system/singularity/example_singularity.py>
+    Example DAGs <https://github.com/apache/airflow/blob/providers-singularity/|version|/providers/singularity/tests/system/singularity/example_singularity.py>
     PyPI Repository <https://pypi.org/project/apache-airflow-providers-singularity/>
     Installing from sources <installing-providers-from-sources>
 
@@ -69,7 +69,7 @@ apache-airflow-providers-singularity package
 `Singularity <https://sylabs.io/guides/latest/user-guide/>`__
 
 
-Release: 3.7.0
+Release: 3.7.1
 
 Provider package
 ----------------
@@ -87,7 +87,7 @@ For the minimum Airflow version supported, see ``Requirements`` below.
 Requirements
 ------------
 
-The minimum Apache Airflow version supported by this provider package is ``2.9.0``.
+The minimum Apache Airflow version supported by this provider distribution is ``2.9.0``.
 
 ==================  ==================
 PIP package         Version required

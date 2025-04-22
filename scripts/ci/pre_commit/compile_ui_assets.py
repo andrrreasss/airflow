@@ -30,13 +30,16 @@ from pathlib import Path
 # here that are not available in stdlib! You should not import common_precommit_utils.py here because
 # They are importing rich library which is not available in the node environment.
 
-AIRFLOW_SOURCES_PATH = Path(__file__).parents[3].resolve()
+sys.path.insert(0, str(Path(__file__).parent.resolve()))  # make sure common_precommit_utils is imported
+from common_precommit_utils import AIRFLOW_CORE_SOURCES_PATH, AIRFLOW_ROOT_PATH
 
-MAIN_UI_DIRECTORY = AIRFLOW_SOURCES_PATH / "airflow" / "ui"
-MAIN_UI_HASH_FILE = AIRFLOW_SOURCES_PATH / ".build" / "ui" / "hash.txt"
+MAIN_UI_DIRECTORY = AIRFLOW_CORE_SOURCES_PATH / "airflow" / "ui"
+MAIN_UI_HASH_FILE = AIRFLOW_ROOT_PATH / ".build" / "ui" / "hash.txt"
 
-SIMPLE_AUTH_MANAGER_UI_DIRECTORY = AIRFLOW_SOURCES_PATH / "airflow" / "auth" / "managers" / "simple" / "ui"
-SIMPLE_AUTH_MANAGER_UI_HASH_FILE = AIRFLOW_SOURCES_PATH / ".build" / "ui" / "simple-auth-manager-hash.txt"
+SIMPLE_AUTH_MANAGER_UI_DIRECTORY = (
+    AIRFLOW_CORE_SOURCES_PATH / "airflow" / "api_fastapi" / "auth" / "managers" / "simple" / "ui"
+)
+SIMPLE_AUTH_MANAGER_UI_HASH_FILE = AIRFLOW_ROOT_PATH / ".build" / "ui" / "simple-auth-manager-hash.txt"
 
 INTERNAL_SERVER_ERROR = "500 Internal Server Error"
 
@@ -61,8 +64,8 @@ def compile_assets(ui_directory: Path, hash_file: Path):
         old_hash = hash_file.read_text() if hash_file.exists() else ""
         new_hash = get_directory_hash(ui_directory, skip_path_regexp=r".*node_modules.*")
         if new_hash == old_hash:
-            print("The UI directory has not changed! Skip regeneration.")
-            sys.exit(0)
+            print(f"The UI directory '{ui_directory}' has not changed! Skip regeneration.")
+            return
     else:
         shutil.rmtree(node_modules_directory, ignore_errors=True)
         shutil.rmtree(dist_directory, ignore_errors=True)

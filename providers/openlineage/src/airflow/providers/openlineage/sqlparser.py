@@ -21,6 +21,9 @@ from typing import TYPE_CHECKING, Callable, TypedDict
 
 import sqlparse
 from attrs import define
+from openlineage.client.event_v2 import Dataset
+from openlineage.client.facet_v2 import column_lineage_dataset, extraction_error_run, sql_job
+from openlineage.common.sql import DbTableMeta, SqlMeta, parse
 
 from airflow.providers.openlineage.extractors.base import OperatorLineage
 from airflow.providers.openlineage.utils.sql import (
@@ -30,16 +33,13 @@ from airflow.providers.openlineage.utils.sql import (
 )
 from airflow.providers.openlineage.utils.utils import should_use_external_connection
 from airflow.utils.log.logging_mixin import LoggingMixin
-from openlineage.client.event_v2 import Dataset
-from openlineage.client.facet_v2 import column_lineage_dataset, extraction_error_run, sql_job
-from openlineage.common.sql import DbTableMeta, SqlMeta, parse
 
 if TYPE_CHECKING:
+    from openlineage.client.facet_v2 import JobFacet, RunFacet
     from sqlalchemy.engine import Engine
 
     from airflow.hooks.base import BaseHook
     from airflow.providers.common.sql.hooks.sql import DbApiHook
-    from openlineage.client.facet_v2 import JobFacet, RunFacet
 
 log = logging.getLogger(__name__)
 
@@ -482,12 +482,18 @@ def get_openlineage_facets_with_sql(
         log.debug("%s failed to get database dialect", hook)
         return None
 
+    try:
+        sqlalchemy_engine = hook.get_sqlalchemy_engine()
+    except Exception as e:
+        log.debug("Failed to get sql alchemy engine: %s", e)
+        sqlalchemy_engine = None
+
     operator_lineage = sql_parser.generate_openlineage_metadata_from_sql(
         sql=sql,
         hook=hook,
         database_info=database_info,
         database=database,
-        sqlalchemy_engine=hook.get_sqlalchemy_engine(),
+        sqlalchemy_engine=sqlalchemy_engine,
         use_connection=should_use_external_connection(hook),
     )
 

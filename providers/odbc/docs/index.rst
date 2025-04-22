@@ -35,6 +35,7 @@
     :caption: Guides
 
     Connection types <connections/odbc>
+    Operators <operators>
 
 .. toctree::
     :hidden:
@@ -43,6 +44,19 @@
 
     Python API <_api/airflow/providers/odbc/index>
 
+.. toctree::
+    :hidden:
+    :maxdepth: 1
+    :caption: System tests
+
+    System Tests <_api/tests/system/odbc/index>
+
+.. toctree::
+    :hidden:
+    :maxdepth: 1
+    :caption: Resources
+
+    Example DAGs <https://github.com/apache/airflow/tree/providers-odbc/|version|/providers/odbc/tests/system/odbc>
     PyPI Repository <https://pypi.org/project/apache-airflow-providers-odbc/>
     Installing from sources <installing-providers-from-sources>
 
@@ -63,7 +77,7 @@ apache-airflow-providers-odbc package
 `ODBC <https://github.com/mkleehammer/pyodbc/wiki>`__
 
 
-Release: 4.9.0
+Release: 4.9.2
 
 Provider package
 ----------------
@@ -81,7 +95,7 @@ For the minimum Airflow version supported, see ``Requirements`` below.
 Requirements
 ------------
 
-The minimum Apache Airflow version supported by this provider package is ``2.9.0``.
+The minimum Apache Airflow version supported by this provider distribution is ``2.9.0``.
 
 =======================================  ==================
 PIP package                              Version required
@@ -95,7 +109,7 @@ Cross provider package dependencies
 -----------------------------------
 
 Those are dependencies that might be needed in order to use all the features of the package.
-You need to install the specified provider packages in order to use them.
+You need to install the specified provider distributions in order to use them.
 
 You can install such cross-provider dependencies when installing from PyPI. For example:
 
@@ -116,5 +130,5 @@ Downloading official packages
 You can download officially released packages and verify their checksums and signatures from the
 `Official Apache Download site <https://downloads.apache.org/airflow/providers/>`_
 
-* `The apache-airflow-providers-odbc 4.9.0 sdist package <https://downloads.apache.org/airflow/providers/apache_airflow_providers_odbc-4.9.0.tar.gz>`_ (`asc <https://downloads.apache.org/airflow/providers/apache_airflow_providers_odbc-4.9.0.tar.gz.asc>`__, `sha512 <https://downloads.apache.org/airflow/providers/apache_airflow_providers_odbc-4.9.0.tar.gz.sha512>`__)
-* `The apache-airflow-providers-odbc 4.9.0 wheel package <https://downloads.apache.org/airflow/providers/apache_airflow_providers_odbc-4.9.0-py3-none-any.whl>`_ (`asc <https://downloads.apache.org/airflow/providers/apache_airflow_providers_odbc-4.9.0-py3-none-any.whl.asc>`__, `sha512 <https://downloads.apache.org/airflow/providers/apache_airflow_providers_odbc-4.9.0-py3-none-any.whl.sha512>`__)
+* `The apache-airflow-providers-odbc 4.9.2 sdist package <https://downloads.apache.org/airflow/providers/apache_airflow_providers_odbc-4.9.2.tar.gz>`_ (`asc <https://downloads.apache.org/airflow/providers/apache_airflow_providers_odbc-4.9.2.tar.gz.asc>`__, `sha512 <https://downloads.apache.org/airflow/providers/apache_airflow_providers_odbc-4.9.2.tar.gz.sha512>`__)
+* `The apache-airflow-providers-odbc 4.9.2 wheel package <https://downloads.apache.org/airflow/providers/apache_airflow_providers_odbc-4.9.2-py3-none-any.whl>`_ (`asc <https://downloads.apache.org/airflow/providers/apache_airflow_providers_odbc-4.9.2-py3-none-any.whl.asc>`__, `sha512 <https://downloads.apache.org/airflow/providers/apache_airflow_providers_odbc-4.9.2-py3-none-any.whl.sha512>`__)

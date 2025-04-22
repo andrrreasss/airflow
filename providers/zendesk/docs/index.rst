@@ -55,7 +55,7 @@
     :maxdepth: 1
     :caption: Resources
 
-    Example DAGs <https://github.com/apache/airflow/tree/providers-zendesk/|version|/providers/tests/system/zendesk/example_zendesk_custom_get.py>
+    Example DAGs <https://github.com/apache/airflow/tree/providers-zendesk/|version|/providers/zendesk/tests/system/zendesk/example_zendesk_custom_get.py>
     PyPI Repository <https://pypi.org/project/apache-airflow-providers-zendesk/>
     Installing from sources <installing-providers-from-sources>
 
@@ -76,7 +76,7 @@ apache-airflow-providers-zendesk package
 `Zendesk <https://www.zendesk.com/>`__
 
 
-Release: 4.9.0
+Release: 4.9.1
 
 Provider package
 ----------------
@@ -94,7 +94,7 @@ For the minimum Airflow version supported, see ``Requirements`` below.
 Requirements
 ------------
 
-The minimum Apache Airflow version supported by this provider package is ``2.9.0``.
+The minimum Apache Airflow version supported by this provider distribution is ``2.9.0``.
 
 ==================  ==================
 PIP package         Version required

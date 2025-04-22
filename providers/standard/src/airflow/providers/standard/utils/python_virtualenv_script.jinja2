@@ -20,7 +20,12 @@ from __future__ import annotations
 
 import {{ pickling_library }}
 import sys
+import os
+# Setting the PYTHON_OPERATORS_VIRTUAL_ENV_MODE environment variable to 1,
+# helps to avoid the issue of re creating the orm session in the settings file, otherwise
+# it fails with airflow-db-not-allowed
 
+os.environ["PYTHON_OPERATORS_VIRTUAL_ENV_MODE"] = "1"
 {% if expect_airflow %}
  {# Check whether Airflow is available in the environment.
  # If it is, we'll want to ensure that we integrate any macros that are being provided
@@ -62,30 +67,6 @@ arg_dict = {"args": [], "kwargs": {}}
 # Read string args
 with open(sys.argv[3], "r") as file:
     virtualenv_string_args = list(map(lambda x: x.strip(), list(file)))
-{% endif %}
-
-{% if use_airflow_context | default(false) -%}
-if len(sys.argv) > 5:
-    import json
-    from types import ModuleType
-
-    from airflow.providers.standard.operators import python as airflow_python
-
-
-    class _MockPython(ModuleType):
-        @staticmethod
-        def get_current_context():
-            with open(sys.argv[5]) as file:
-                context = json.load(file)
-                raise Exception("Not yet implemented")
-                # TODO: return deserialized context
-
-        def __getattr__(self, name: str):
-            return getattr(airflow_python, name)
-
-
-    MockPython = _MockPython("MockPython")
-    sys.modules["airflow.providers.standard.operators.python"] = MockPython
 {% endif %}
 
 try:

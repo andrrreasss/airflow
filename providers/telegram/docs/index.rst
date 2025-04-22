@@ -56,7 +56,7 @@
     :maxdepth: 1
     :caption: Resources
 
-    Example DAGs <https://github.com/apache/airflow/tree/providers-telegram/|version|/providers/tests/system/telegram>
+    Example DAGs <https://github.com/apache/airflow/tree/providers-telegram/|version|/providers/telegram/tests/system/telegram>
     PyPI Repository <https://pypi.org/project/apache-airflow-providers-telegram/>
     Installing from sources <installing-providers-from-sources>
 
@@ -77,7 +77,7 @@ apache-airflow-providers-telegram package
 `Telegram <https://telegram.org/>`__
 
 
-Release: 4.7.0
+Release: 4.7.2
 
 Provider package
 ----------------
@@ -95,7 +95,7 @@ For the minimum Airflow version supported, see ``Requirements`` below.
 Requirements
 ------------
 
-The minimum Apache Airflow version supported by this provider package is ``2.9.0``.
+The minimum Apache Airflow version supported by this provider distribution is ``2.9.0``.
 
 =======================  ==================
 PIP package              Version required

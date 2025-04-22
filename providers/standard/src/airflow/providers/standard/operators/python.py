@@ -42,9 +42,7 @@ from airflow.exceptions import (
     DeserializingResultError,
 )
 from airflow.models.baseoperator import BaseOperator
-from airflow.models.skipmixin import SkipMixin
 from airflow.models.variable import Variable
-from airflow.operators.branch import BranchMixIn
 from airflow.providers.standard.utils.python_virtualenv import prepare_virtualenv, write_python_script
 from airflow.providers.standard.version_compat import AIRFLOW_V_2_10_PLUS, AIRFLOW_V_3_0_PLUS
 from airflow.utils import hashlib_wrapper
@@ -53,6 +51,14 @@ from airflow.utils.file import get_unique_dag_module_name
 from airflow.utils.operator_helpers import KeywordParameters
 from airflow.utils.process_utils import execute_in_subprocess, execute_in_subprocess_with_kwargs
 
+if AIRFLOW_V_3_0_PLUS:
+    from airflow.providers.standard.operators.branch import BranchMixIn
+    from airflow.providers.standard.utils.skipmixin import SkipMixin
+else:
+    from airflow.models.skipmixin import SkipMixin
+    from airflow.operators.branch import BranchMixIn  # type: ignore[no-redef]
+
+
 log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -60,10 +66,12 @@ if TYPE_CHECKING:
 
     from pendulum.datetime import DateTime
 
+    from airflow.sdk.execution_time.callback_runner import ExecutionCallableRunner
+    from airflow.sdk.execution_time.context import OutletEventAccessorsProtocol
+
     try:
         from airflow.sdk.definitions.context import Context
-    except ImportError:
-        # TODO: Remove once provider drops support for Airflow 2
+    except ImportError:  # TODO: Remove once provider drops support for Airflow 2
         from airflow.utils.context import Context
 
     _SerializerTypeDef = Literal["pickle", "cloudpickle", "dill"]
@@ -184,14 +192,22 @@ class PythonOperator(BaseOperator):
         context_merge(context, self.op_kwargs, templates_dict=self.templates_dict)
         self.op_kwargs = self.determine_kwargs(context)
 
-        if AIRFLOW_V_3_0_PLUS:
-            from airflow.utils.context import context_get_outlet_events
+        # This needs to be lazy because subclasses may implement execute_callable
+        # by running a separate process that can't use the eager result.
+        def __prepare_execution() -> tuple[ExecutionCallableRunner, OutletEventAccessorsProtocol] | None:
+            if AIRFLOW_V_3_0_PLUS:
+                from airflow.sdk.execution_time.callback_runner import create_executable_runner
+                from airflow.sdk.execution_time.context import context_get_outlet_events
 
-            self._asset_events = context_get_outlet_events(context)
-        elif AIRFLOW_V_2_10_PLUS:
-            from airflow.utils.context import context_get_outlet_events
+                return create_executable_runner, context_get_outlet_events(context)
+            if AIRFLOW_V_2_10_PLUS:
+                from airflow.utils.context import context_get_outlet_events  # type: ignore
+                from airflow.utils.operator_helpers import ExecutionCallableRunner  # type: ignore
 
-            self._dataset_events = context_get_outlet_events(context)
+                return ExecutionCallableRunner, context_get_outlet_events(context)
+            return None
+
+        self.__prepare_execution = __prepare_execution
 
         return_value = self.execute_callable()
         if self.show_return_value_in_logs:
@@ -204,21 +220,18 @@ class PythonOperator(BaseOperator):
     def determine_kwargs(self, context: Mapping[str, Any]) -> Mapping[str, Any]:
         return KeywordParameters.determine(self.python_callable, self.op_args, context).unpacking()
 
+    __prepare_execution: Callable[[], tuple[ExecutionCallableRunner, OutletEventAccessorsProtocol] | None]
+
     def execute_callable(self) -> Any:
         """
         Call the python callable with the given arguments.
 
         :return: the return value of the call.
         """
-        try:
-            from airflow.utils.operator_helpers import ExecutionCallableRunner
-
-            asset_events = self._asset_events if AIRFLOW_V_3_0_PLUS else self._dataset_events
-
-            runner = ExecutionCallableRunner(self.python_callable, asset_events, logger=self.log)
-        except ImportError:
-            # Handle Pre Airflow 3.10 case where ExecutionCallableRunner was not available
+        if (execution_preparation := self.__prepare_execution()) is None:
             return self.python_callable(*self.op_args, **self.op_kwargs)
+        create_execution_runner, asset_events = execution_preparation
+        runner = create_execution_runner(self.python_callable, asset_events, logger=self.log)
         return runner.run(*self.op_args, **self.op_kwargs)
 
 
@@ -235,6 +248,8 @@ class BranchPythonOperator(PythonOperator, BranchMixIn):
     are propagated downstream to allow for the DAG state to fill up and
     the DAG run's state to be inferred.
     """
+
+    inherits_from_skipmixin = True
 
     def execute(self, context: Context) -> Any:
         return self.do_branch(context, super().execute(context))
@@ -266,6 +281,8 @@ class ShortCircuitOperator(PythonOperator, SkipMixin):
         skipped but the ``trigger_rule`` defined for all other downstream tasks will be respected.
     """
 
+    inherits_from_skipmixin = True
+
     def __init__(self, *, ignore_downstream_trigger_rules: bool = True, **kwargs) -> None:
         super().__init__(**kwargs)
         self.ignore_downstream_trigger_rules = ignore_downstream_trigger_rules
@@ -295,25 +312,24 @@ class ShortCircuitOperator(PythonOperator, SkipMixin):
 
         to_skip = get_tasks_to_skip()
 
-        # this let's us avoid an intermediate list unless debug logging
+        # this lets us avoid an intermediate list unless debug logging
         if self.log.getEffectiveLevel() <= logging.DEBUG:
             self.log.debug("Downstream task IDs %s", to_skip := list(get_tasks_to_skip()))
 
         self.log.info("Skipping downstream tasks")
         if AIRFLOW_V_3_0_PLUS:
             self.skip(
-                dag_id=dag_run.dag_id,
-                run_id=dag_run.run_id,
+                ti=context["ti"],
                 tasks=to_skip,
-                map_index=context["ti"].map_index,
             )
         else:
-            self.skip(
-                dag_run=dag_run,
-                tasks=to_skip,
-                execution_date=cast("DateTime", dag_run.logical_date),  # type: ignore[call-arg, union-attr]
-                map_index=context["ti"].map_index,
-            )
+            if to_skip:
+                self.skip(
+                    dag_run=context["dag_run"],
+                    tasks=to_skip,
+                    execution_date=cast("DateTime", dag_run.logical_date),  # type: ignore[call-arg, union-attr]
+                    map_index=context["ti"].map_index,
+                )
 
         self.log.info("Done.")
         # returns the result of the super execute method as it is instead of returning None
@@ -377,6 +393,9 @@ class _BasePythonVirtualenvOperator(PythonOperator, metaclass=ABCMeta):
         "yesterday_ds",
         "yesterday_ds_nodash",
     }
+    if AIRFLOW_V_3_0_PLUS:
+        BASE_SERIALIZABLE_CONTEXT_KEYS.add("task_reschedule_count")
+
     PENDULUM_SERIALIZABLE_CONTEXT_KEYS = {
         "data_interval_end",
         "data_interval_start",
@@ -418,7 +437,6 @@ class _BasePythonVirtualenvOperator(PythonOperator, metaclass=ABCMeta):
         skip_on_exit_code: int | Container[int] | None = None,
         env_vars: dict[str, str] | None = None,
         inherit_env: bool = True,
-        use_airflow_context: bool = False,
         **kwargs,
     ):
         if (
@@ -442,8 +460,7 @@ class _BasePythonVirtualenvOperator(PythonOperator, metaclass=ABCMeta):
         serializer = serializer or "pickle"
         if serializer not in _SERIALIZERS:
             msg = (
-                f"Unsupported serializer {serializer!r}. "
-                f"Expected one of {', '.join(map(repr, _SERIALIZERS))}"
+                f"Unsupported serializer {serializer!r}. Expected one of {', '.join(map(repr, _SERIALIZERS))}"
             )
             raise AirflowException(msg)
 
@@ -460,7 +477,6 @@ class _BasePythonVirtualenvOperator(PythonOperator, metaclass=ABCMeta):
         )
         self.env_vars = env_vars
         self.inherit_env = inherit_env
-        self.use_airflow_context = use_airflow_context
 
     @abstractmethod
     def _iter_serializable_context_keys(self):
@@ -519,7 +535,6 @@ class _BasePythonVirtualenvOperator(PythonOperator, metaclass=ABCMeta):
                 "pickling_library": self.serializer,
                 "python_callable": self.python_callable.__name__,
                 "python_callable_source": self.get_python_source(),
-                "use_airflow_context": self.use_airflow_context,
             }
 
             if inspect.getfile(self.python_callable) == self.dag.fileloc:
@@ -530,20 +545,6 @@ class _BasePythonVirtualenvOperator(PythonOperator, metaclass=ABCMeta):
                 filename=os.fspath(script_path),
                 render_template_as_native_obj=self.dag.render_template_as_native_obj,
             )
-            if self.use_airflow_context:
-                # TODO: replace with commented code when context serialization is implemented in AIP-72
-                raise AirflowException(
-                    "The `use_airflow_context=True` is not yet implemented. "
-                    "It will work in Airflow 3 after AIP-72 context "
-                    "serialization is ready."
-                )
-                # context = get_current_context()
-                # with create_session() as session:
-                #     dag_run, task_instance = context["dag_run"], context["task_instance"]
-                #     session.add_all([dag_run, task_instance])
-                #     serializable_context: dict[Encoding, Any] = # Get serializable context here
-                # with airflow_context_path.open("w+") as file:
-                #     json.dump(serializable_context, file)
 
             env_vars = dict(os.environ) if self.inherit_env else {}
             if self.env_vars:
@@ -572,13 +573,12 @@ class _BasePythonVirtualenvOperator(PythonOperator, metaclass=ABCMeta):
             except subprocess.CalledProcessError as e:
                 if e.returncode in self.skip_on_exit_code:
                     raise AirflowSkipException(f"Process exited with code {e.returncode}. Skipping.")
-                elif termination_log_path.exists() and termination_log_path.stat().st_size > 0:
+                if termination_log_path.exists() and termination_log_path.stat().st_size > 0:
                     error_msg = f"Process returned non-zero exit status {e.returncode}.\n"
                     with open(termination_log_path) as file:
                         error_msg += file.read()
                     raise AirflowException(error_msg) from None
-                else:
-                    raise
+                raise
 
             if 0 in self.skip_on_exit_code:
                 raise AirflowSkipException("Process exited with code 0. Skipping.")
@@ -589,8 +589,7 @@ class _BasePythonVirtualenvOperator(PythonOperator, metaclass=ABCMeta):
         keyword_params = KeywordParameters.determine(self.python_callable, self.op_args, context)
         if AIRFLOW_V_3_0_PLUS:
             return keyword_params.unpacking()
-        else:
-            return keyword_params.serializing()  # type: ignore[attr-defined]
+        return keyword_params.serializing()  # type: ignore[attr-defined]
 
 
 class PythonVirtualenvOperator(_BasePythonVirtualenvOperator):
@@ -658,8 +657,6 @@ class PythonVirtualenvOperator(_BasePythonVirtualenvOperator):
         environment. If set to ``True``, the virtual environment will inherit the environment variables
         of the parent process (``os.environ``). If set to ``False``, the virtual environment will be
         executed with a clean environment.
-    :param use_airflow_context: Whether to provide ``get_current_context()`` to the python_callable.
-        NOT YET IMPLEMENTED - waits for AIP-72 context serialization.
     """
 
     template_fields: Sequence[str] = tuple(
@@ -687,7 +684,6 @@ class PythonVirtualenvOperator(_BasePythonVirtualenvOperator):
         venv_cache_path: None | os.PathLike[str] = None,
         env_vars: dict[str, str] | None = None,
         inherit_env: bool = True,
-        use_airflow_context: bool = False,
         **kwargs,
     ):
         if (
@@ -703,18 +699,6 @@ class PythonVirtualenvOperator(_BasePythonVirtualenvOperator):
         if python_version is not None and not isinstance(python_version, str):
             raise AirflowException(
                 "Passing non-string types (e.g. int or float) as python_version not supported"
-            )
-        if use_airflow_context and (not expect_airflow and not system_site_packages):
-            raise AirflowException(
-                "The `use_airflow_context` parameter is set to True, but "
-                "expect_airflow and system_site_packages are set to False."
-            )
-        # TODO: remove when context serialization is implemented in AIP-72
-        if use_airflow_context and not AIRFLOW_V_3_0_PLUS:
-            raise AirflowException(
-                "The `use_airflow_context=True` is not yet implemented. "
-                "It will work in Airflow 3 after AIP-72 context "
-                "serialization is ready."
             )
         if not requirements:
             self.requirements: list[str] = []
@@ -744,7 +728,6 @@ class PythonVirtualenvOperator(_BasePythonVirtualenvOperator):
             skip_on_exit_code=skip_on_exit_code,
             env_vars=env_vars,
             inherit_env=inherit_env,
-            use_airflow_context=use_airflow_context,
             **kwargs,
         )
 
@@ -821,7 +804,7 @@ class PythonVirtualenvOperator(_BasePythonVirtualenvOperator):
                     if hash_marker.exists():
                         previous_hash_data = hash_marker.read_text(encoding="utf8")
                         if previous_hash_data == hash_data:
-                            self.log.info("Re-using cached Python virtual environment in %s", venv_path)
+                            self.log.info("Reusing cached Python virtual environment in %s", venv_path)
                             return venv_path
 
                         _, hash_data_before_upgrade = self._calculate_cache_hash(exclude_cloudpickle=True)
@@ -898,6 +881,8 @@ class BranchPythonVirtualenvOperator(PythonVirtualenvOperator, BranchMixIn):
         :ref:`howto/operator:BranchPythonVirtualenvOperator`
     """
 
+    inherits_from_skipmixin = True
+
     def execute(self, context: Context) -> Any:
         return self.do_branch(context, super().execute(context))
 
@@ -960,8 +945,6 @@ class ExternalPythonOperator(_BasePythonVirtualenvOperator):
         environment. If set to ``True``, the virtual environment will inherit the environment variables
         of the parent process (``os.environ``). If set to ``False``, the virtual environment will be
         executed with a clean environment.
-    :param use_airflow_context: Whether to provide ``get_current_context()`` to the python_callable.
-        NOT YET IMPLEMENTED - waits for AIP-72 context serialization.
     """
 
     template_fields: Sequence[str] = tuple({"python"}.union(PythonOperator.template_fields))
@@ -982,22 +965,10 @@ class ExternalPythonOperator(_BasePythonVirtualenvOperator):
         skip_on_exit_code: int | Container[int] | None = None,
         env_vars: dict[str, str] | None = None,
         inherit_env: bool = True,
-        use_airflow_context: bool = False,
         **kwargs,
     ):
         if not python:
             raise ValueError("Python Path must be defined in ExternalPythonOperator")
-        if use_airflow_context and not expect_airflow:
-            raise AirflowException(
-                "The `use_airflow_context` parameter is set to True, but expect_airflow is set to False."
-            )
-        # TODO: remove when context serialization is implemented in AIP-72
-        if use_airflow_context:
-            raise AirflowException(
-                "The `use_airflow_context=True` is not yet implemented. "
-                "It will work in Airflow 3 after AIP-72 context "
-                "serialization is ready."
-            )
         self.python = python
         self.expect_pendulum = expect_pendulum
         super().__init__(
@@ -1012,7 +983,6 @@ class ExternalPythonOperator(_BasePythonVirtualenvOperator):
             skip_on_exit_code=skip_on_exit_code,
             env_vars=env_vars,
             inherit_env=inherit_env,
-            use_airflow_context=use_airflow_context,
             **kwargs,
         )
 
@@ -1158,8 +1128,7 @@ def get_current_context() -> Mapping[str, Any]:
         from airflow.sdk import get_current_context
 
         return get_current_context()
-    else:
-        return _get_current_context()
+    return _get_current_context()
 
 
 def _get_current_context() -> Mapping[str, Any]:
@@ -1169,7 +1138,6 @@ def _get_current_context() -> Mapping[str, Any]:
 
     if not _CURRENT_CONTEXT:
         raise RuntimeError(
-            "Current context was requested but no context was found! "
-            "Are you running within an Airflow task?"
+            "Current context was requested but no context was found! Are you running within an Airflow task?"
         )
     return _CURRENT_CONTEXT[-1]

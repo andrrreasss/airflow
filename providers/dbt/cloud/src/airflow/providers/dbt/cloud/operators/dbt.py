@@ -24,7 +24,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from airflow.configuration import conf
-from airflow.models import BaseOperator, BaseOperatorLink, XCom
+from airflow.models import BaseOperator
+from airflow.providers.common.compat.version_compat import AIRFLOW_V_3_0_PLUS
 from airflow.providers.dbt.cloud.hooks.dbt import (
     DbtCloudHook,
     DbtCloudJobRunException,
@@ -37,6 +38,13 @@ from airflow.providers.dbt.cloud.utils.openlineage import generate_openlineage_e
 if TYPE_CHECKING:
     from airflow.providers.openlineage.extractors import OperatorLineage
     from airflow.utils.context import Context
+
+if AIRFLOW_V_3_0_PLUS:
+    from airflow.sdk import BaseOperatorLink
+    from airflow.sdk.execution_time.xcom import XCom
+else:
+    from airflow.models import XCom  # type: ignore[no-redef]
+    from airflow.models.baseoperatorlink import BaseOperatorLink  # type: ignore[no-redef]
 
 
 class DbtCloudRunJobOperatorLink(BaseOperatorLink):
@@ -57,7 +65,10 @@ class DbtCloudRunJobOperator(BaseOperator):
         :ref:`howto/operator:DbtCloudRunJobOperator`
 
     :param dbt_cloud_conn_id: The connection ID for connecting to dbt Cloud.
-    :param job_id: The ID of a dbt Cloud job.
+    :param job_id: The ID of a dbt Cloud job. Required if project_name, environment_name, and job_name are not provided.
+    :param project_name: Optional. The name of a dbt Cloud project. Used only if ``job_id`` is None.
+    :param environment_name: Optional. The name of a dbt Cloud environment. Used only if ``job_id`` is None.
+    :param job_name: Optional. The name of a dbt Cloud job. Used only if ``job_id`` is None.
     :param account_id: Optional. The ID of a dbt Cloud account.
     :param trigger_reason: Optional. Description of the reason to trigger the job.
         Defaults to "Triggered via Apache Airflow by task <task_id> in the <dag_id> DAG."
@@ -86,6 +97,9 @@ class DbtCloudRunJobOperator(BaseOperator):
     template_fields = (
         "dbt_cloud_conn_id",
         "job_id",
+        "project_name",
+        "environment_name",
+        "job_name",
         "account_id",
         "trigger_reason",
         "steps_override",
@@ -99,7 +113,10 @@ class DbtCloudRunJobOperator(BaseOperator):
         self,
         *,
         dbt_cloud_conn_id: str = DbtCloudHook.default_conn_name,
-        job_id: int,
+        job_id: int | None = None,
+        project_name: str | None = None,
+        environment_name: str | None = None,
+        job_name: str | None = None,
         account_id: int | None = None,
         trigger_reason: str | None = None,
         steps_override: list[str] | None = None,
@@ -117,6 +134,9 @@ class DbtCloudRunJobOperator(BaseOperator):
         self.dbt_cloud_conn_id = dbt_cloud_conn_id
         self.account_id = account_id
         self.job_id = job_id
+        self.project_name = project_name
+        self.environment_name = environment_name
+        self.job_name = job_name
         self.trigger_reason = trigger_reason
         self.steps_override = steps_override
         self.schema_override = schema_override
@@ -134,6 +154,18 @@ class DbtCloudRunJobOperator(BaseOperator):
             self.trigger_reason = (
                 f"Triggered via Apache Airflow by task {self.task_id!r} in the {self.dag.dag_id} DAG."
             )
+
+        if self.job_id is None:
+            if not all([self.project_name, self.environment_name, self.job_name]):
+                raise ValueError(
+                    "Either job_id or project_name, environment_name, and job_name must be provided."
+                )
+            self.job_id = self.hook.get_job_by_name(
+                account_id=self.account_id,
+                project_name=self.project_name,
+                environment_name=self.environment_name,
+                job_name=self.job_name,
+            )["id"]
 
         non_terminal_runs = None
         if self.reuse_existing_run:
@@ -184,30 +216,29 @@ class DbtCloudRunJobOperator(BaseOperator):
                     raise DbtCloudJobRunException(f"Job run {self.run_id} has failed or has been cancelled.")
 
                 return self.run_id
-            else:
-                end_time = time.time() + self.timeout
-                job_run_info = JobRunInfo(account_id=self.account_id, run_id=self.run_id)
-                job_run_status = self.hook.get_job_run_status(**job_run_info)
-                if not DbtCloudJobRunStatus.is_terminal(job_run_status):
-                    self.defer(
-                        timeout=self.execution_timeout,
-                        trigger=DbtCloudRunJobTrigger(
-                            conn_id=self.dbt_cloud_conn_id,
-                            run_id=self.run_id,
-                            end_time=end_time,
-                            account_id=self.account_id,
-                            poll_interval=self.check_interval,
-                        ),
-                        method_name="execute_complete",
-                    )
-                elif job_run_status == DbtCloudJobRunStatus.SUCCESS.value:
-                    self.log.info("Job run %s has completed successfully.", self.run_id)
-                    return self.run_id
-                elif job_run_status in (
-                    DbtCloudJobRunStatus.CANCELLED.value,
-                    DbtCloudJobRunStatus.ERROR.value,
-                ):
-                    raise DbtCloudJobRunException(f"Job run {self.run_id} has failed or has been cancelled.")
+            end_time = time.time() + self.timeout
+            job_run_info = JobRunInfo(account_id=self.account_id, run_id=self.run_id)
+            job_run_status = self.hook.get_job_run_status(**job_run_info)
+            if not DbtCloudJobRunStatus.is_terminal(job_run_status):
+                self.defer(
+                    timeout=self.execution_timeout,
+                    trigger=DbtCloudRunJobTrigger(
+                        conn_id=self.dbt_cloud_conn_id,
+                        run_id=self.run_id,
+                        end_time=end_time,
+                        account_id=self.account_id,
+                        poll_interval=self.check_interval,
+                    ),
+                    method_name="execute_complete",
+                )
+            elif job_run_status == DbtCloudJobRunStatus.SUCCESS.value:
+                self.log.info("Job run %s has completed successfully.", self.run_id)
+                return self.run_id
+            elif job_run_status in (
+                DbtCloudJobRunStatus.CANCELLED.value,
+                DbtCloudJobRunStatus.ERROR.value,
+            ):
+                raise DbtCloudJobRunException(f"Job run {self.run_id} has failed or has been cancelled.")
         else:
             if self.deferrable is True:
                 warnings.warn(
@@ -223,7 +254,7 @@ class DbtCloudRunJobOperator(BaseOperator):
         self.run_id = event["run_id"]
         if event["status"] == "cancelled":
             raise DbtCloudJobRunException(f"Job run {self.run_id} has been cancelled.")
-        elif event["status"] == "error":
+        if event["status"] == "error":
             raise DbtCloudJobRunException(f"Job run {self.run_id} has failed.")
         self.log.info(event["message"])
         return int(event["run_id"])
@@ -254,9 +285,13 @@ class DbtCloudRunJobOperator(BaseOperator):
         """
         from airflow.providers.openlineage.extractors import OperatorLineage
 
-        if isinstance(self.run_id, int) and self.wait_for_termination is True:
-            return generate_openlineage_events_from_dbt_cloud_run(operator=self, task_instance=task_instance)
-        return OperatorLineage()
+        if not isinstance(self.run_id, int):
+            self.log.info("Skipping OpenLineage event extraction: `self.run_id` is not set.")
+            return OperatorLineage()
+        if not self.wait_for_termination:
+            self.log.info("Skipping OpenLineage event extraction: `self.wait_for_termination` is False.")
+            return OperatorLineage()
+        return generate_openlineage_events_from_dbt_cloud_run(operator=self, task_instance=task_instance)
 
 
 class DbtCloudGetJobRunArtifactOperator(BaseOperator):
